@@ -61,7 +61,6 @@ def remap_geometry(collada_item, dict_source_map, offset_map, list_vcount, list_
                 for n in range(3):
                     temp_v.append(ary_v[v_ref * 3 + n])
                     temp_n.append(ary_n[n_ref * 3 + n])
-
             else:
                 for n, flip in ((0, 1), (2, 1), (1, -1)):
                     temp_v.append(ary_v[v_ref * 3 + n] * flip)
@@ -90,7 +89,6 @@ def remap_geometry(collada_item, dict_source_map, offset_map, list_vcount, list_
                 list_w += temp_w
 
         else:
-
             list_v += temp_v[0:3]
             list_v += temp_v[6:9]
             list_v += temp_v[3:6]

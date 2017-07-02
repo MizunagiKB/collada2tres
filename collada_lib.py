@@ -26,6 +26,8 @@ class CColladaItem:
     def __init__(self):
         self.up_axis = None
 
+        self.dict_source = {}
+
         self.dict_source_controllers = {}
         self.dict_source_morph = {}
         self.morph_targets_map = None
@@ -101,10 +103,16 @@ def create_offset_map(o_node, name):
     return offset_map
 
 
-def array_loader(o_node, name, o_logger):
+def array_loader(o_node_parent, name, o_logger):
 
-    o_node_sub = o_node.getElementsByTagName(name)[0]
-    for v in o_node_sub.childNodes:
+    list_node = o_node_parent.getElementsByTagName(name)
+
+    if len(list_node) == 0:
+        o_logger.debug("%s not found", name)
+        return None
+
+    o_node = list_node[0]
+    for v in o_node.childNodes:
         if v.nodeType == o_node.TEXT_NODE:
             if name in ("IDREF_array", "Name_array"):
                 return [v for v in v.data.split()]

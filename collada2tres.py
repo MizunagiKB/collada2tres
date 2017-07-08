@@ -1,497 +1,202 @@
 # -*- coding: utf-8 -*-
+# ------------------------------------------------------------------ import(s)
 import sys
 import xml.dom.minidom
 import logging
 import argparse
 
-import jinja2
+import collada.collada_type as co_type
+import collada.collada_util as co_util
 
-import collada_lib
+import collada.lib_material as lib_material
+import collada.lib_geometry as lib_geometry
+import collada.lib_controller as lib_controller
+
+import export.export_godot as exp_godot
 
 
+# ------------------------------------------------------------------- param(s)
 LOGGING_FORMAT = "%(asctime)-15s %(levelname)8s %(message)s"
 
 
+# ---------------------------------------------------------------- function(s)
 # ============================================================================
-def remap_geometry(collada_item, dict_source_map, offset_map, list_vcount, list_p, o_logger):
-    """Y軸以外が上向きの場合は、頂点配列の入れ替えが必要。
-    """
+def load_node_instance(collada_scene, o_node, instance_type, url, logger=None):
 
-    o_geometry = collada_lib.CColladaGeometory()
+    if instance_type not in ["instance_camera", "instance_controller", "instance_geometry", "instance_light"]:
+        logger.error("not support instance type '%s'", instance_type)
 
-    b_enable_armature = False
+    elif instance_type == "instance_camera":
+        pass
 
-    if len(collada_item.dict_armature) > 0:
-        b_enable_armature = True
+    elif instance_type == "instance_controller":
 
-    o_logger.debug(dict_source_map.items())
-    o_logger.debug(offset_map.get_source("VERTEX"))
-    o_logger.debug(offset_map.get_source("NORMAL"))
-    o_logger.debug(offset_map.get_source("TEXCOORD"))
+        xml_node_controller = collada_scene.dict_id[url[1:]]
 
-    ary_v = collada_item.dict_source[dict_source_map[offset_map.get_source("VERTEX")]]
-    list_v = []
-    ary_n = collada_item.dict_source[offset_map.get_source("NORMAL")]
-    list_n = []
-    ary_t = collada_item.dict_source[offset_map.get_source("TEXCOORD")]
-    list_t = []
+        o_node.o_instance = lib_controller.create_controller(
+            collada_scene,
+            xml_node_controller,
+            logger
+        )
 
-    list_j = []
-    list_w = []
+        return True
 
-    n_pos = 0
-    stride_size = offset_map.get_stride_size()
+    elif instance_type == "instance_geometry":
 
-    for v_count in list_vcount:
+        xml_node_geometry = collada_scene.dict_id[url[1:]]
 
-        temp_v = []
-        temp_n = []
-        temp_t = []
+        o_node.o_instance = lib_geometry.create_geometry(
+            collada_scene,
+            xml_node_geometry,
+            logger
+        )
 
-        temp_j = []
-        temp_w = []
+        return True
 
-        for n in range(v_count):
-            list_data = list_p[n_pos:n_pos + stride_size]
-            v_ref = list_data[offset_map.get_offset("VERTEX")]
-            n_ref = list_data[offset_map.get_offset("NORMAL")]
-            t_ref = list_data[offset_map.get_offset("TEXCOORD")]
+    elif instance_type == "instance_light":
+        pass
 
-            if collada_item.up_axis == "Y_UPz":
-                for n in range(3):
-                    temp_v.append(ary_v[v_ref * 3 + n])
-                    temp_n.append(ary_n[n_ref * 3 + n])
-            else:
-                for n, flip in ((0, 1), (2, 1), (1, -1)):
-                    temp_v.append(ary_v[v_ref * 3 + n] * flip)
-                    temp_n.append(ary_n[n_ref * 3 + n] * flip)
-
-            if b_enable_armature is True:
-                temp_j.append(collada_item.skin_j[v_ref])
-                temp_w.append(collada_item.skin_w[v_ref])
-
-            for n, flip in ((0, 0), (1, 1)):
-                if flip == 0:
-                    temp_t.append(ary_t[t_ref * 2 + n])
-                else:
-                    temp_t.append(1.0 - ary_t[t_ref * 2 + n])
-
-            n_pos += stride_size
-
-            o_geometry.mesh_virt_size += 1
-
-        if collada_item.up_axis == "Y_UPz":
-            list_v += temp_v
-            list_n += temp_n
-            list_t += temp_t
-            if b_enable_armature is True:
-                list_j += temp_j
-                list_w += temp_w
-
-        else:
-            list_v += temp_v[0:3]
-            list_v += temp_v[6:9]
-            list_v += temp_v[3:6]
-
-            list_n += temp_n[0:3]
-            list_n += temp_n[6:9]
-            list_n += temp_n[3:6]
-
-            list_t += temp_t[0:2]
-            list_t += temp_t[4:6]
-            list_t += temp_t[2:4]
-
-            if b_enable_armature is True:
-
-                list_j += temp_j[0:1]
-                list_j += temp_j[2:3]
-                list_j += temp_j[1:2]
-
-                list_w += temp_w[0:1]
-                list_w += temp_w[2:3]
-                list_w += temp_w[1:2]
-
-    o_geometry.varray_virt = list_v
-    o_geometry.varray_norm = list_n
-    o_geometry.varray_tex1 = list_t
-
-    if b_enable_armature is True:
-
-        o_geometry.varray_j = []
-        for j1 in list_j:
-            for j in j1:
-                o_geometry.varray_j.append(j)
-
-        o_geometry.varray_w = []
-        for w1 in list_w:
-            for w in w1:
-                o_geometry.varray_w.append(w)
-
-    return o_geometry
+    return False
 
 
 # ============================================================================
-def mesh_convert(o_argv, o_dom, o_logger, o_node_parent, collada_item, geometry_name, insert_list):
+def load_visual_scene(o_argv, xml_dom, attr_url, collada_scene, logger=None):
 
-    #
-    dict_source_map = {}
-    for o_node in o_node_parent.getElementsByTagName("vertices"):
-        attr_id = o_node.getAttribute("id")
+    xml_node_scene = collada_scene.dict_id[attr_url[1:]]
 
-        o_node_sub = o_node.getElementsByTagName("input")[0]
-        attr_semantic = o_node_sub.getAttribute("semantic")
-        attr_source = o_node_sub.getAttribute("source")[1:]
-        dict_source_map[attr_id] = attr_source
+    for xml_node in co_util.iter_xml_tag_name(
+        xml_node_scene,
+        "node"
+        ):
 
-    #
-    for node_name in ("polylist", "triangles"):
-        for o_node in o_node_parent.getElementsByTagName(node_name):
+        attr_id = xml_node.getAttribute("id")
+        attr_name = xml_node.getAttribute("name")
+        attr_type = xml_node.getAttribute("type")
 
-            attr_material = o_node.getAttribute("material")
-            attr_count = int(o_node.getAttribute("count"))
+        logger.debug("visual_scene>node> id = %s, name = %s, type = %s", attr_id, attr_name, attr_type)
 
-            if o_argv.MATERIAL is not None:
-                if attr_material not in o_argv.MATERIAL:
-                    continue
+        o_node = co_type.CNode(collada_scene)
+        for xml_node_matrix in co_util.iter_xml_tag_name(xml_node, "matrix"):
+            o_node.xml_node_matrix = xml_node_matrix
+            o_node.mtx44 = co_util.get_matrix44(xml_node_matrix)
 
-            o_logger.info("%s material:%s", node_name, attr_material)
+        if o_node.xml_node_matrix is None:
+            o_node.xml_node_matrix = None
+            o_node.mtx44 = co_util.get_matrix44_identity()
+            logger.warn("[load_visual_scene] '<matrix>' node not found.")
 
-            #
-            offset_map = collada_lib.create_offset_map(
+        for xml_node_instance in co_util.iter_xml_tag_name(
+            xml_node, ["instance_camera", "instance_controller", "instance_geometry", "instance_light"]
+            ):
+
+            o_node.xml_node_instance = xml_node_instance
+            o_node.instance_type = xml_node_instance.tagName
+
+            o_node.attr_instance_url = xml_node_instance.getAttribute("url")
+            o_node.attr_instance_name = xml_node_instance.getAttribute("name")
+
+            if load_node_instance(
+                collada_scene,
                 o_node,
-                "input"
-            )
+                o_node.instance_type,
+                o_node.attr_instance_url,
+                logger
+                ) is True:
 
-            if node_name == "triangles":
-                list_vcount = [3] * attr_count
-            else:
-                list_vcount = collada_lib.array_loader(
-                    o_node, "vcount", o_logger
-                )
+                collada_scene.list_node.append(o_node)
 
-            list_p = collada_lib.array_loader(
-                o_node, "p", o_logger
-            )
-
-            o_geometry = remap_geometry(
-                collada_item,
-                dict_source_map,
-                offset_map,
-                list_vcount,
-                list_p,
-                o_logger
-            )
-
-            n_index = 1
-
-            o_geometry.geometry_name = geometry_name
-            o_geometry.material = attr_material
-            o_geometry.material_index = n_index
-            o_geometry.material_name = attr_material
-
-            for dict_material in collada_item.list_material:
-                if dict_material["id"] == attr_material:
-                    o_geometry.material = attr_material
-                    o_geometry.material_index = n_index
-                    o_geometry.material_name = dict_material["name"]
-                    break
-                n_index += 1
-
-            insert_list.append(o_geometry)
 
 # ============================================================================
-def parse_geometries(o_argv, o_dom, o_logger, o_node_parent, collada_item):
+def search_xml_node_id(xml_dom, xml_node, collada_item, logger=None):
 
-    for o_node in o_node_parent.getElementsByTagName("geometry"):
-        attr_id = o_node.getAttribute("id")
-        attr_name = o_node.getAttribute("name")
+    for xml_node_child in xml_node.childNodes:
+        if xml_node_child.nodeType == xml_dom.ELEMENT_NODE:
+            attr_id = xml_node_child.getAttribute("id")
 
-        o_logger.info("geometry id:%s name:%s", attr_id, attr_name)
+            if len(attr_id) > 0:
+                if attr_id in collada_item.dict_id:
+                    logger.critical("id '%s' is not unique.", attr_id)
+                    sys.exit(-1)
 
-        insert_list = insert_list = collada_item.list_geometry
+                collada_item.dict_id[attr_id] = xml_node_child
 
-        if collada_item.morph_targets_map is not None:
+            search_xml_node_id(
+                xml_dom,
+                xml_node_child,
+                collada_item
+            )
 
-            ref_target = collada_item.morph_targets_map.get_source("MORPH_TARGET")
-            ref_weight = collada_item.morph_targets_map.get_source("MORPH_WEIGHT")
+# ============================================================================
+def search_xml_node_ref_source(xml_dom, xml_node, collada_item, logger=None):
 
-            if attr_id in collada_item.dict_source_morph[ref_target]:
-                if attr_id not in collada_item.dict_morph:
-                    collada_item.list_morph_name.append(attr_name)
+    for xml_node_child in xml_node.childNodes:
+        if xml_node_child.nodeType == xml_dom.ELEMENT_NODE:
+            attr_source = xml_node_child.getAttribute("source")
 
-                collada_item.dict_morph[attr_name] = []
-                insert_list = collada_item.dict_morph[attr_name]
+            if len(attr_source) > 0:
+                if attr_source not in collada_item.dict_ref_source:
+                    collada_item.dict_ref_source[attr_source] = []
+                collada_item.dict_ref_source[attr_source].append(xml_node)
 
-        #
-        for o_node_sub in o_node.getElementsByTagName("mesh"):
-
-            o_logger.info("geometry>mesh")
-
-            mesh_convert(
-                o_argv,
-                o_dom, o_logger,
-                o_node_sub,
-                collada_item,
-                attr_name,
-                insert_list
+            search_xml_node_ref_source(
+                xml_dom,
+                xml_node_child,
+                collada_item
             )
 
 
 # ============================================================================
-def remap_contoller(collada_item, dict_source_map, offset_map, list_vcount, list_v, o_logger):
+def parse(o_argv, xml_dom, logger=None):
 
-    o_logger.debug(dict_source_map.items())
-    o_logger.debug(offset_map.get_source("JOINT"))
-    o_logger.debug(offset_map.get_source("WEIGHT"))
-
-    ary_j = collada_item.dict_source[offset_map.get_source("JOINT")]
-    list_j = []
-    ary_w = collada_item.dict_source[offset_map.get_source("WEIGHT")]
-    list_w = []
-
-    n_pos = 0
-    stride_size = offset_map.get_stride_size()
-
-    for v_count in list_vcount:
-
-        temp_j = [0, 0, 0, 0]
-        temp_w = [0, 0, 0, 0]
-
-        if v_count > 4:
-            o_logger.warn("vcount > 4")
-        else:
-            for n in range(v_count):
-                list_data = list_v[n_pos:n_pos + stride_size]
-                j_ref = list_data[offset_map.get_offset("JOINT")]
-                w_ref = list_data[offset_map.get_offset("WEIGHT")]
-
-                temp_j[n] = collada_item.dict_armature[ary_j[j_ref]]
-                temp_w[n] = ary_w[w_ref]
-
-                n_pos += stride_size
-
-        list_j.append(temp_j)
-        list_w.append(temp_w)
-
-    collada_item.skin_j = list_j
-    collada_item.skin_w = list_w
-
-
-# ============================================================================
-def skin_convert(o_jinja_env, o_dom, o_logger, o_node_parent, collada_item):
-
-    #
-    #for o_node in o_node_parent.getElementsByTagName("bind_shape_matrix"):
-    #    pass
-
-    for o_node in o_node_parent.getElementsByTagName("source"):
-        attr_id = o_node.getAttribute("id")
-
-        o_node_param = o_node.getElementsByTagName("param")[0]
-        attr_param_name = o_node_param.getAttribute("name")
-        attr_param_type = o_node_param.getAttribute("type")
-
-        if attr_param_name == "JOINT":
-            collada_item.dict_source_controllers[attr_id] = collada_lib.array_loader(
-                o_node, "Name_array", o_logger
-            )
-
-        if attr_param_name == "WEIGHT":
-            collada_item.dict_source_controllers[attr_id] = collada_lib.array_loader(
-                o_node, "float_array", o_logger
-            )
-
-    #
-    dict_source_map = {}
-    for o_node in o_node_parent.getElementsByTagName("joints"):
-        attr_id = o_node.getAttribute("id")
-
-        o_node_input = o_node.getElementsByTagName("input")[0]
-        attr_semantic = o_node_input.getAttribute("semantic")
-        attr_source = o_node_input.getAttribute("source")[1:]
-        dict_source_map[attr_id] = attr_source
-
-    #
-    for o_node in o_node_parent.getElementsByTagName("vertex_weights"):
-
-        offset_map = collada_lib.create_offset_map(o_node, "input")
-
-        list_vcount = collada_lib.array_loader(
-            o_node, "vcount", o_logger
-        )
-
-        list_v = collada_lib.array_loader(
-            o_node, "v", o_logger
-        )
-
-        remap_contoller(
-            collada_item,
-            dict_source_map,
-            offset_map,
-            list_vcount,
-            list_v,
-            o_logger
-        )
-
-
-# ============================================================================
-def morph_convert(o_jinja_env, o_dom, o_logger, o_node_parent, collada_item):
-
-    for o_node in o_node_parent.getElementsByTagName("source"):
-        attr_id = o_node.getAttribute("id")
-
-        o_param = o_node.getElementsByTagName("param")[0]
-        attr_param_name = o_param.getAttribute("name")
-        attr_param_type = o_param.getAttribute("type")
-
-        o_logger.info("morph>source id:%s", attr_id)
-        o_logger.info(
-            "morph>source>param name:%s type:%s",
-            attr_param_name,
-            attr_param_type
-        )
-
-        if attr_param_name == "IDREF":
-            collada_item.dict_source_morph[attr_id] = collada_lib.array_loader(
-                o_node, "IDREF_array", o_logger
-            )
-            for ref in collada_item.dict_source_morph[attr_id]:
-                o_logger.debug(ref)
-
-        if attr_param_name == "MORPH_WEIGHT":
-            collada_item.dict_source_morph[attr_id] = collada_lib.array_loader(
-                o_node, "float_array", o_logger
-            )
-
-    #
-    for o_node in o_node_parent.getElementsByTagName("targets"):
-
-        collada_item.morph_targets_map = collada_lib.create_offset_map(o_node, "input")
-
-
-# ============================================================================
-def parse_controllers(o_jinja_env, o_dom, o_logger, o_node_parent, collada_item):
-
-    for o_node in o_node_parent.getElementsByTagName("controller"):
-        attr_id = o_node.getAttribute("id")
-        attr_name = o_node.getAttribute("name")
-        o_logger.info("controller id:%s name:%s", attr_id, attr_name)
-
-        for o_node_sub in o_node.getElementsByTagName("skin"):
-            skin_convert(o_jinja_env, o_dom, o_logger, o_node_sub, collada_item)
-
-        for o_node_sub in o_node.getElementsByTagName("morph"):
-            morph_convert(o_jinja_env, o_dom, o_logger, o_node_sub, collada_item)
-
-
-# ============================================================================
-def parse_visual_scenes(o_argv, o_dom, o_logger, o_node_parent, collada_item):
-
-    dict_armature = {}
-
-    for o_node in o_node_parent.getElementsByTagName("node"):
-        attr_id = o_node.getAttribute("id")
-        attr_type = o_node.getAttribute("type")
-
-        if attr_type == "JOINT":
-            for o_node_joint in o_node.getElementsByTagName("node"):
-                attr_id = o_node_joint.getAttribute("id")
-                attr_type = o_node_joint.getAttribute("type")
-
-                if attr_type == "JOINT":
-                    if attr_id not in dict_armature:
-                        dict_armature[attr_id] = len(dict_armature)
-
-                        o_logger.info("node id:%s type:%s", attr_id, attr_type)
-
-    collada_item.dict_armature = dict_armature
-
-
-# ============================================================================
-def parse_materials(o_argv, o_dom, o_logger, o_node_parent, collada_item):
-
-    list_material = []
-
-    for o_node in o_node_parent.getElementsByTagName("material"):
-        attr_id = o_node.getAttribute("id")
-        attr_name = o_node.getAttribute("name")
-        o_logger.info("material id:%s name:%s", attr_id, attr_name)
-
-        o_node_material = o_node.getElementsByTagName("instance_effect")[0]
-        attr_url = o_node_material.getAttribute("url")
-
-        if o_argv.MATERIAL is not None:
-            if attr_id in o_argv.MATERIAL:
-                list_material.append(
-                    {
-                        "id": attr_id,
-                        "name": attr_name
-                    }
-                )
-        else:
-            list_material.append(
-                {
-                    "id": attr_id,
-                    "name": attr_name
-                }
-            )
-
-    collada_item.list_material = list_material
-
-
-# ============================================================================
-def build_source_data(o_argv, o_dom, o_logger, collada_item):
-
-    for o_node in o_dom.getElementsByTagName("source"):
-        attr_id = o_node.getAttribute("id")
-        attr_name = o_node.getAttribute("name")
-
-        if attr_id is "":
-            continue
-
-        o_logger.debug("*>source id:%s name:%s", attr_id, attr_name)
-
-        data_array = None
-        for array_type in ("float_array", "IDREF_array", "Name_array"):
-            data_array = collada_lib.array_loader(
-                o_node, array_type, o_logger
-            )
-            if data_array is not None:
-                collada_item.dict_source[attr_id] = data_array
-                break
-
-        if data_array is None:
-            o_logger.error("source %s type error", name)
-
-# ============================================================================
-def parse(o_argv, o_dom, o_logger):
-
-    collada_item = collada_lib.CColladaItem()
+    collada_scene = co_type.CColladaScene()
+    collada_scene.o_argv = o_argv
+    collada_scene.xml_dom = xml_dom
 
     # Check UP Axis
-
-    o_node = o_dom.getElementsByTagName("asset")[0].getElementsByTagName("up_axis")[0]
+    o_node = xml_dom.getElementsByTagName("asset")[0].getElementsByTagName("up_axis")[0]
     up_axis = o_node.childNodes[0].data.strip().upper()
-    collada_item.up_axis = up_axis
-    o_logger.info("asset up_axis:%s", up_axis)
+    collada_scene.up_axis = up_axis
+    logger.info("asset>up_axis> %s", up_axis)
 
-    build_source_data(o_argv, o_dom, o_logger, collada_item)
+    # Check Unit
+    o_node = xml_dom.getElementsByTagName("asset")[0].getElementsByTagName("unit")[0]
+    unit_name = o_node.getAttribute("name")
+    unit_value = float(o_node.getAttribute(unit_name))
+    collada_scene.unit_name = unit_name
+    collada_scene.unit_value = unit_value
+    logger.info("asset>unit> name = %s, value = %f", unit_name, unit_value)
 
-    # Load library nodes
+    search_xml_node_id(xml_dom, xml_dom, collada_scene, logger)
+    logger.info("found id count %d", len(collada_scene.dict_id))
 
-    for o_node in o_dom.getElementsByTagName("library_materials"):
-        parse_materials(o_argv, o_dom, o_logger, o_node, collada_item)
+    search_xml_node_ref_source(xml_dom, xml_dom, collada_scene, logger)
+    logger.info("found ref source count %d", len(collada_scene.dict_ref_source))
 
-    for o_node in o_dom.getElementsByTagName("library_visual_scenes"):
-        parse_visual_scenes(o_argv, o_dom, o_logger, o_node, collada_item)
+    #
+    for xml_node in xml_dom.getElementsByTagName("library_materials"):
+        lib_material.load_library_materials(
+            collada_scene, xml_node, logger
+        )
 
-    for o_node in o_dom.getElementsByTagName("library_controllers"):
-        parse_controllers(o_argv, o_dom, o_logger, o_node, collada_item)
+    #
+#    for xml_node in xml_dom.getElementsByTagName("library_controllers"):
+#        lib_controller.load_library_controllers(
+#            collada_scene, xml_node, logger
+#        )
 
-    for o_node in o_dom.getElementsByTagName("library_geometries"):
-        parse_geometries(o_argv, o_dom, o_logger, o_node, collada_item)
+    # decode scene
+    xml_node_scene = xml_dom.getElementsByTagName("scene")[0]
 
-    return collada_item
+    for xml_node_instance in co_util.iter_xml_tag_name(
+        xml_node_scene,
+        "instance_visual_scene"
+        ):
+
+        attr_url = xml_node_instance.getAttribute("url")
+
+        load_visual_scene(o_argv, xml_dom, attr_url, collada_scene, logger)
+
+    return collada_scene
 
 
 # ============================================================================
@@ -528,11 +233,25 @@ def main():
         default=False,
         help=""
     )
+    o_parser.add_argument(
+        "--wo-morph",
+        action="store_true",
+        dest="WO_MORPH",
+        default=False,
+        help="Without Mesh morph"
+    )
+    o_parser.add_argument(
+        "--wo-skin",
+        action="store_true",
+        dest="WO_SKIN",
+        default=False,
+        help="Without Mesh skin"
+    )
 
     o_argv = o_parser.parse_args()
 
     if o_argv.MATERIAL is not None:
-        o_argv.MATERIAL = o_argv.MATERIAL.split(",")
+        o_argv.MATERIAL = [name.strip() for name in o_argv.MATERIAL.split(",")]
 
     logging.basicConfig(format=LOGGING_FORMAT)
 
@@ -547,33 +266,9 @@ def main():
     if o_dom.documentElement.tagName.strip() != "COLLADA":
         o_log.error("File type error.")
 
-    o_jinja_env = jinja2.Environment(
-        loader=jinja2.FileSystemLoader("./templates")
-    )
+    collada_scene = parse(o_argv, o_dom, o_logger)
 
-    collada_item = parse(o_argv, o_dom, o_logger)
-
-    # export tres file
-
-    with open(o_argv.O_FILE, "w") as h_writer:
-
-        o_template = o_jinja_env.get_template("godot_tres.jinja2")
-        h_writer.write(o_template.render())
-
-        o_template = o_jinja_env.get_template("godot_tres_material.jinja2")
-        h_writer.write(
-            o_template.render(
-                collada_item=collada_item
-            )
-        )
-
-        o_template = o_jinja_env.get_template("godot_tres_mesh.jinja2")
-        h_writer.write(
-            o_template.render(
-                name="collada_export",
-                collada_item=collada_item
-            )
-        )
+    exp_godot.export(collada_scene)
 
 
 if __name__ == "__main__":

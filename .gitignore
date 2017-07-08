@@ -102,4 +102,5 @@ ENV/
 
 .DS_Store
 *.tres
+*.tscn
 testdata

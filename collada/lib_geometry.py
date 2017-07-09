@@ -87,6 +87,20 @@ def create_geometry(collada_scene, xml_node_geometry, logger=None):
                     if attr_material not in collada_scene.o_argv.MATERIAL:
                         continue
 
+                #
+                if attr_material in collada_scene.dict_material:
+                    o_material = collada_scene.dict_material[attr_material]
+                elif attr_material in collada_scene.bind_material:
+                    o_material = collada_scene.bind_material[attr_material]
+                else:
+                    o_material = None
+                    logger.critical(
+                        "[create_geometry] material '%s' is not found",
+                        attr_material
+                    )
+
+                    sys.exit()
+
                 logger.debug(
                     "geometry>mesh>%s> material = %s",
                     xml_node_mesh_type.tagName,
@@ -97,12 +111,10 @@ def create_geometry(collada_scene, xml_node_geometry, logger=None):
                 o_mesh.attr_geometry_id = None
                 o_mesh.attr_geometry_name = None
                 o_mesh.attr_material = attr_material
+                o_mesh.material_ridx = o_material.resource_ridx
+                o_mesh.material_name = o_material.attr_name
 
-                if attr_material in collada_scene.dict_material:
-                    o_material = collada_scene.dict_material[attr_material]
-                    o_mesh.material_ridx = o_material.resource_ridx
-                    o_mesh.material_name = o_material.attr_name
-
+                #
                 if xml_node_mesh_type.tagName == "triangles":
                     o_mesh.list_vcount = [3] * attr_count
 

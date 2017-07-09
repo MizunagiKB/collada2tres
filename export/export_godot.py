@@ -73,13 +73,15 @@ _import_transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 )
                 o_morph = o_geometry.o_morph
                 o_skin = None
 
-            if collada_scene.o_argv.WO_MORPH is True:
-                o_morph = None
+            if len(o_geometry.list_mesh) > 0:
 
-            if collada_scene.o_argv.WO_SKIN is True:
-                o_skin = None
+                if collada_scene.o_argv.WO_MORPH is True:
+                    o_morph = None
 
-            render_data += jinja2_env.from_string(
+                if collada_scene.o_argv.WO_SKIN is True:
+                    o_skin = None
+
+                render_data += jinja2_env.from_string(
 """
 [node name="{{ o_geometry.attr_geometry_name }}" type="Spatial" parent="."]
 
@@ -129,13 +131,13 @@ material/{{ loop.index0 }} = null
 {% endfor -%}
 
 """
-            ).render(
-                o_geometry=o_geometry,
-                o_skin=o_skin,
-                resource_idx=resource_idx + resource_count
-            )
+                ).render(
+                    o_geometry=o_geometry,
+                    o_skin=o_skin,
+                    resource_idx=resource_idx + resource_count
+                )
 
-            resource_count += 1
+                resource_count += 1
 
     return render_data, resource_idx + resource_count
 
@@ -157,13 +159,15 @@ def render_mesh(jinja2_env, collada_scene, render_data, resource_idx):
                 o_morph = o_geometry.o_morph
                 o_skin = None
 
-            if collada_scene.o_argv.WO_MORPH is True:
-                o_morph = None
+            if len(o_geometry.list_mesh) > 0:
 
-            if collada_scene.o_argv.WO_SKIN is True:
-                o_skin = None
+                if collada_scene.o_argv.WO_MORPH is True:
+                    o_morph = None
 
-            render_data += jinja2_env.from_string(
+                if collada_scene.o_argv.WO_SKIN is True:
+                    o_skin = None
+
+                render_data += jinja2_env.from_string(
 """
 [sub_resource type="Mesh" id={{ resource_idx }}]
 
@@ -258,15 +262,15 @@ null
 custom_aabb/custom_aabb = AABB( 0, 0, 0, 0, 0, 0 )
 
 """
-            ).render(
-                collada_scene=collada_scene,
-                o_geometry=o_geometry,
-                o_morph=o_morph,
-                o_skin=o_skin,
-                resource_idx=resource_idx + resource_count
-            )
+                ).render(
+                    collada_scene=collada_scene,
+                    o_geometry=o_geometry,
+                    o_morph=o_morph,
+                    o_skin=o_skin,
+                    resource_idx=resource_idx + resource_count
+                )
 
-            resource_count += 1
+                resource_count += 1
 
     return render_node(jinja2_env, collada_scene, render_data, resource_idx)
 

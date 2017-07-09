@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
+"""Godot scene file from COLLADA.
+    @author MizunagiKB
+"""
 # ------------------------------------------------------------------ import(s)
 import sys
-import xml.dom.minidom
 import logging
 import argparse
+import xml.dom.minidom
 
 import collada.collada_type as co_type
 import collada.collada_util as co_util
 
-import collada.lib_material as lib_material
-import collada.lib_geometry as lib_geometry
-import collada.lib_controller as lib_controller
+import collada.lib_material
+import collada.lib_geometry
+import collada.lib_controller
 
-import export.export_godot as exp_godot
+import export.export_godot
 
 
 # ------------------------------------------------------------------- param(s)
@@ -20,6 +23,24 @@ LOGGING_FORMAT = "%(asctime)-15s %(levelname)8s %(message)s"
 
 
 # ---------------------------------------------------------------- function(s)
+# ============================================================================
+def load_material(collada_scene, xml_node_instance, logger=None):
+
+    collada_scene.bind_material = {}
+
+    for xml_node_bind_material in co_util.iter_xml_tag_name(xml_node_instance, "bind_material"):
+        for xml_node_technique_common in co_util.iter_xml_tag_name(xml_node_bind_material, "technique_common"):
+            for xml_node in co_util.iter_xml_tag_name(xml_node_technique_common, "instance_material"):
+                attr_symbol = xml_node.getAttribute("symbol")
+                attr_target = xml_node.getAttribute("target")
+
+                o_material = collada_scene.dict_material[attr_target[1:]]
+
+                collada_scene.bind_material[attr_symbol] = o_material
+
+                logger.debug("[load_material] bind_material %s", attr_symbol)
+
+
 # ============================================================================
 def load_node_instance(collada_scene, o_node, instance_type, url, logger=None):
 
@@ -31,9 +52,11 @@ def load_node_instance(collada_scene, o_node, instance_type, url, logger=None):
 
     elif instance_type == "instance_controller":
 
+        load_material(collada_scene, o_node.xml_node_instance, logger)
+
         xml_node_controller = collada_scene.dict_id[url[1:]]
 
-        o_node.o_instance = lib_controller.create_controller(
+        o_node.o_instance = collada.lib_controller.create_controller(
             collada_scene,
             xml_node_controller,
             logger
@@ -43,9 +66,11 @@ def load_node_instance(collada_scene, o_node, instance_type, url, logger=None):
 
     elif instance_type == "instance_geometry":
 
+        load_material(collada_scene, o_node.xml_node_instance, logger)
+
         xml_node_geometry = collada_scene.dict_id[url[1:]]
 
-        o_node.o_instance = lib_geometry.create_geometry(
+        o_node.o_instance = collada.lib_geometry.create_geometry(
             collada_scene,
             xml_node_geometry,
             logger
@@ -60,14 +85,9 @@ def load_node_instance(collada_scene, o_node, instance_type, url, logger=None):
 
 
 # ============================================================================
-def load_visual_scene(o_argv, xml_dom, attr_url, collada_scene, logger=None):
+def recursive_node(collada_scene, xml_node_parent, logger=None):
 
-    xml_node_scene = collada_scene.dict_id[attr_url[1:]]
-
-    for xml_node in co_util.iter_xml_tag_name(
-        xml_node_scene,
-        "node"
-        ):
+    for xml_node in co_util.iter_xml_tag_name(xml_node_parent, "node"):
 
         attr_id = xml_node.getAttribute("id")
         attr_name = xml_node.getAttribute("name")
@@ -105,26 +125,39 @@ def load_visual_scene(o_argv, xml_dom, attr_url, collada_scene, logger=None):
 
                 collada_scene.list_node.append(o_node)
 
+        recursive_node(collada_scene, xml_node, logger)
+
 
 # ============================================================================
-def search_xml_node_id(xml_dom, xml_node, collada_item, logger=None):
+def load_visual_scene(o_argv, xml_dom, attr_url, collada_scene, logger=None):
+
+    xml_node_scene = collada_scene.dict_id[attr_url[1:]]
+
+    recursive_node(collada_scene, xml_node_scene, logger)
+
+
+# ============================================================================
+def search_xml_node_id(xml_dom, xml_node, collada_scene, logger=None):
 
     for xml_node_child in xml_node.childNodes:
         if xml_node_child.nodeType == xml_dom.ELEMENT_NODE:
             attr_id = xml_node_child.getAttribute("id")
 
             if len(attr_id) > 0:
-                if attr_id in collada_item.dict_id:
-                    logger.critical("id '%s' is not unique.", attr_id)
-                    sys.exit(-1)
-
-                collada_item.dict_id[attr_id] = xml_node_child
+                if attr_id in collada_scene.dict_id:
+                    logger.critical("id '%s' is not unique. (tagName = %s)", attr_id, xml_node_child.tagName)
+                    if collada_scene.o_argv.FORCE is not True:
+                        sys.exit(-1)
+                else:
+                    collada_scene.dict_id[attr_id] = xml_node_child
 
             search_xml_node_id(
                 xml_dom,
                 xml_node_child,
-                collada_item
+                collada_scene,
+                logger
             )
+
 
 # ============================================================================
 def search_xml_node_ref_source(xml_dom, xml_node, collada_item, logger=None):
@@ -141,7 +174,8 @@ def search_xml_node_ref_source(xml_dom, xml_node, collada_item, logger=None):
             search_xml_node_ref_source(
                 xml_dom,
                 xml_node_child,
-                collada_item
+                collada_item,
+                logger
             )
 
 
@@ -152,19 +186,26 @@ def parse(o_argv, xml_dom, logger=None):
     collada_scene.o_argv = o_argv
     collada_scene.xml_dom = xml_dom
 
-    # Check UP Axis
-    o_node = xml_dom.getElementsByTagName("asset")[0].getElementsByTagName("up_axis")[0]
-    up_axis = o_node.childNodes[0].data.strip().upper()
-    collada_scene.up_axis = up_axis
-    logger.info("asset>up_axis> %s", up_axis)
+    collada_scene.up_axis = "Y_UP"
+    collada_scene.unit_name = "meter"
+    collada_scene.unit_value = 1.0
 
-    # Check Unit
-    o_node = xml_dom.getElementsByTagName("asset")[0].getElementsByTagName("unit")[0]
-    unit_name = o_node.getAttribute("name")
-    unit_value = float(o_node.getAttribute(unit_name))
-    collada_scene.unit_name = unit_name
-    collada_scene.unit_value = unit_value
-    logger.info("asset>unit> name = %s, value = %f", unit_name, unit_value)
+    if len(xml_dom.getElementsByTagName("asset")) > 0:
+        # Check UP Axis
+        if len(xml_dom.getElementsByTagName("asset")[0].getElementsByTagName("up_axis")) > 0:
+            xml_node = xml_dom.getElementsByTagName("asset")[0].getElementsByTagName("up_axis")[0]
+            up_axis = xml_node.childNodes[0].data.strip().upper()
+            collada_scene.up_axis = up_axis
+            logger.info("asset>up_axis> %s", up_axis)
+
+        # Check Unit
+        if len(xml_dom.getElementsByTagName("asset")[0].getElementsByTagName("unit")) > 0:
+            xml_node = xml_dom.getElementsByTagName("asset")[0].getElementsByTagName("unit")[0]
+            unit_name = xml_node.getAttribute("name")
+            unit_value = float(xml_node.getAttribute(unit_name))
+            collada_scene.unit_name = unit_name
+            collada_scene.unit_value = unit_value
+            logger.info("asset>unit> name = %s, value = %f", unit_name, unit_value)
 
     search_xml_node_id(xml_dom, xml_dom, collada_scene, logger)
     logger.info("found id count %d", len(collada_scene.dict_id))
@@ -174,15 +215,9 @@ def parse(o_argv, xml_dom, logger=None):
 
     #
     for xml_node in xml_dom.getElementsByTagName("library_materials"):
-        lib_material.load_library_materials(
+        collada.lib_material.load_library_materials(
             collada_scene, xml_node, logger
         )
-
-    #
-#    for xml_node in xml_dom.getElementsByTagName("library_controllers"):
-#        lib_controller.load_library_controllers(
-#            collada_scene, xml_node, logger
-#        )
 
     # decode scene
     xml_node_scene = xml_dom.getElementsByTagName("scene")[0]
@@ -213,6 +248,13 @@ def main():
         help="Input Collada filename"
     )
     o_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        dest="FORCE",
+        default=False,
+        help=""
+    )
+    o_parser.add_argument(
         "-m", "--material",
         type=str,
         required=False,
@@ -224,14 +266,14 @@ def main():
         type=str,
         required=True,
         dest="O_FILE",
-        help="Output tres filename"
+        help="Output tscn filename"
     )
     o_parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         dest="VERBOSE",
         default=False,
-        help=""
+        help="Enable debug information"
     )
     o_parser.add_argument(
         "--wo-morph",
@@ -256,6 +298,7 @@ def main():
     logging.basicConfig(format=LOGGING_FORMAT)
 
     o_logger = logging.getLogger(__name__)
+
     if o_argv.VERBOSE is False:
         o_logger.setLevel(logging.ERROR)
     else:
@@ -268,7 +311,7 @@ def main():
 
     collada_scene = parse(o_argv, o_dom, o_logger)
 
-    exp_godot.export(collada_scene)
+    export.export_godot.export(collada_scene)
 
 
 if __name__ == "__main__":

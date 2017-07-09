@@ -189,6 +189,7 @@ class CColladaScene:
 
         # library_materials
         self.dict_material = {}
+        self.bind_material = {}
 
         # library_materials
         self.dict_controller = {}

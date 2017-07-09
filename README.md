@@ -49,38 +49,33 @@ collada2tres.py -i [dae filename] -o [tscn filename]
 
       * CGeometry
         * CMesh
-                CMorph
-                    method
-                    CInput("MORPH_TARGET_0", "MORPH_WEIGHT_0")
-                        src
-                        dst
-            CController
-                CSkin
-                    list_vcount
-                    list_v
-                    CInput(JOINT_0, WEIGHT_0)
-                        src
-                        dst
-                    CGeometry
-                        CMesh
-                            attr_geometry_id
-                            attr_geometry_name
-                            attr_material
-                            mesh_virt_size
-
-                            list_vcount
-                            list_p
-                            CInput(VERTEX_0, NORMAL0, TEXCOORD_0, TEXCOORD_1)
-                                src
-                                dst
-                        CMorph
-                            method
-                            CInput("MORPH_TARGET_0", "MORPH_WEIGHT_0")
-                                src
-                                dst
-                CMorph
-
-    list_skin
+          * CMorph
+            * method
+            * CInput("MORPH_TARGET_0", "MORPH_WEIGHT_0")
+              * src[]
+              * dst[CGeometry]
+      * CController
+        * CSkin
+          * list_vcount
+          * list_v
+          * CInput(JOINT_0, WEIGHT_0)
+            * src
+            * dst
+              * CGeometry
+                * CMesh
+                  * attr_geometry_id
+                  * attr_geometry_name
+                  * attr_material
+                  * list_vcount
+                  * list_p
+                  * CInput(VERTEX_0, NORMAL0, TEXCOORD_0, TEXCOORD_1)
+                    * src[]
+                    * dst[]
+                  * CMorph
+                    * method
+                    * CInput("MORPH_TARGET_0", "MORPH_WEIGHT_0")
+                      * src[]
+                      * dst[CGeometry]
 
     dict_material[key]
         CMaterial(attr_id, attr_name)
